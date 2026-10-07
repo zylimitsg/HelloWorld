@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#000000">
+<title>计算器</title>
+<style>
+  :root {
+    --bg: #000;
+    --fn: #a5a5a5;
+    --fn-press: #d9d9d9;
+    --num: #333;
+    --num-press: #737373;
+    --op: #ff9f0a;
+    --op-press: #fcc78d;
+    --gap: 14px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+  }
+  .calc {
+    height: 100%;
+    max-width: 420px;
+    margin: 0 auto;
+    padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+  }
+  .display {
+    flex: 1;
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+    padding: 0 8px 8px;
+    font-weight: 300;
+    font-size: 88px;
+    line-height: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    cursor: default;
+  }
+  .keys {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--gap);
+  }
+  button {
+    aspect-ratio: 1;
+    border: none;
+    border-radius: 999px;
+    font: inherit;
+    font-size: 36px;
+    color: #fff;
+    background: var(--num);
+    cursor: pointer;
+    transition: background-color .25s, color .25s;
+    padding: 0;
+  }
+  button:active { transition: none; }
+  .num:active { background: var(--num-press); }
+  .fn { background: var(--fn); color: #000; font-size: 30px; }
+  .fn:active { background: var(--fn-press); }
+  .op { background: var(--op); font-size: 42px; }
+  .op:active { background: var(--op-press); }
+  .op.active { background: #fff; color: var(--op); }
+  .zero {
+    grid-column: span 2;
+    aspect-ratio: auto;
+    text-align: left;
+    padding-left: 13%;
+  }
+</style>
+</head>
+<body>
+<main class="calc">
+  <div class="display" id="display" title="左右滑动可删除最后一位">0</div>
+  <div class="keys">
+    <button class="fn" id="clear" data-action="clear">AC</button>
+    <button class="fn" data-action="sign">+/−</button>
+    <button class="fn" data-action="percent">%</button>
+    <button class="op" data-op="÷">÷</button>
+
+    <button class="num" data-digit="7">7</button>
+    <button class="num" data-digit="8">8</button>
+    <button class="num" data-digit="9">9</button>
+    <button class="op" data-op="×">×</button>
+
+    <button class="num" data-digit="4">4</button>
+    <button class="num" data-digit="5">5</button>
+    <button class="num" data-digit="6">6</button>
+    <button class="op" data-op="−">−</button>
+
+    <button class="num" data-digit="1">1</button>
+    <button class="num" data-digit="2">2</button>
+    <button class="num" data-digit="3">3</button>
+    <button class="op" data-op="+">+</button>
+
+    <button class="num zero" data-digit="0">0</button>
+    <button class="num" data-digit=".">.</button>
+    <button class="op" data-action="equals">=</button>
+  </div>
+</main>
+
+<script>
+  const MAX_DIGITS = 9;
+  const displayEl = document.getElementById('display');
+  const clearEl = document.getElementById('clear');
+
+  // tokens 交替保存数字和运算符，例如 [1, '+', 2, '×']
+  let tokens = [];
+  let current = '0';     // 屏幕上正在输入或显示的数字（字符串）
+  let fresh = true;      // 下一次按数字时是否开始一个新数字
+  let typed = false;     // 是否已输入内容（决定显示 AC 还是 C）
+  let lastEquals = null; // 连续按 = 时重复上一次运算
+  let error = false;
+
+  function apply(a, op, b) {
+    switch (op) {
+      case '+': return a + b;
+      case '−': return a - b;
+      case '×': return a * b;
+      case '÷':
+        if (b === 0) throw new Error('除以 0');
+        return a / b;
+    }
+  }
+
+  // 按先乘除后加减计算 [n, op, n, op, n ...]
+  function evaluate(list) {
+    const stack = [list[0]];
+    for (let i = 1; i < list.length; i += 2) {
+      const op = list[i], n = list[i + 1];
+      if (op === '×' || op === '÷') {
+        stack.push(apply(stack.pop(), op, n));
+      } else {
+        stack.push(op, n);
+      }
+    }
+    let result = stack[0];
+    for (let i = 1; i < stack.length; i += 2) {
+      result = apply(result, stack[i], stack[i + 1]);
+    }
+    return result;
+  }
+
+  function formatResult(v) {
+    if (!isFinite(v)) throw new Error('溢出');
+    const abs = Math.abs(v);
+    if (abs !== 0 && (abs >= 1e9 || abs < 1e-8)) {
+      return v.toExponential(5).replace(/\.?0+e/, 'e').replace('e+', 'e');
+    }
+    return String(Number(v.toPrecision(MAX_DIGITS)));
+  }
+
+  // 给正在输入的数字加千位分隔符，保留用户输入的小数部分
+  function formatDisplay(s) {
+    if (s.includes('e')) return s;
+    const neg = s.startsWith('-');
+    const [int, dec] = (neg ? s.slice(1) : s).split('.');
+    const grouped = int.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return (neg ? '-' : '') + grouped + (dec !== undefined ? '.' + dec : '');
+  }
+
+  function render() {
+    const text = error ? '错误' : formatDisplay(current);
+    displayEl.textContent = text;
+    const len = text.length;
+    displayEl.style.fontSize = len <= 6 ? '88px' : len <= 8 ? '72px' : len <= 10 ? '58px' : '48px';
+    clearEl.textContent = typed ? 'C' : 'AC';
+    const pendingOp = fresh && tokens.length ? tokens[tokens.length - 1] : null;
+    document.querySelectorAll('[data-op]').forEach(b =>
+      b.classList.toggle('active', b.dataset.op === pendingOp));
+  }
+
+  function reset() {
+    tokens = [];
+    current = '0';
+    fresh = true;
+    typed = false;
+    lastEquals = null;
+    error = false;
+  }
+
+  function fail() {
+    reset();
+    error = true;
+  }
+
+  function inputDigit(d) {
+    if (error) reset();
+    if (fresh) {
+      current = d === '.' ? '0.' : d;
+      fresh = false;
+    } else {
+      if (d === '.' && current.includes('.')) return;
+      if (current.replace(/[-.]/g, '').length >= MAX_DIGITS) return;
+      current = current === '0' && d !== '.' ? d : current === '-0' && d !== '.' ? '-' + d : current + d;
+    }
+    typed = true;
+  }
+
+  function inputOp(op) {
+    if (error) return;
+    lastEquals = null;
+    if (fresh && tokens.length) {
+      tokens[tokens.length - 1] = op; // 连续按运算符时只换运算符
+      return;
+    }
+    tokens.push(parseFloat(current), op);
+    const list = tokens.slice(0, -1);
+    try {
+      let value;
+      if (op === '+' || op === '−') {
+        value = evaluate(list);
+      } else {
+        // 乘除只显示当前这一段乘除链的结果，和 iPhone 一样
+        let start = list.length - 1;
+        while (start >= 2 && (list[start - 1] === '×' || list[start - 1] === '÷')) start -= 2;
+        value = evaluate(list.slice(start));
+      }
+      current = formatResult(value);
+    } catch {
+      return fail();
+    }
+    fresh = true;
+  }
+
+  function equals() {
+    if (error) return;
+    try {
+      if (!tokens.length) {
+        if (lastEquals) {
+          current = formatResult(apply(parseFloat(current), lastEquals.op, lastEquals.n));
+        }
+      } else {
+        const n = parseFloat(current);
+        tokens.push(n);
+        lastEquals = { op: tokens[tokens.length - 2], n };
+        current = formatResult(evaluate(tokens));
+        tokens = [];
+      }
+    } catch {
+      return fail();
+    }
+    fresh = true;
+  }
+
+  function clear() {
+    if (typed) {
+      current = '0';
+      fresh = true;
+      typed = false;
+    } else {
+      reset();
+    }
+  }
+
+  function toggleSign() {
+    if (error) return;
+    if (fresh && tokens.length) {
+      current = '-0';
+      fresh = false;
+    } else {
+      current = current.startsWith('-') ? current.slice(1) : '-' + current;
+    }
+  }
+
+  function percent() {
+    if (error) return;
+    let value = parseFloat(current) / 100;
+    const lastOp = tokens[tokens.length - 1];
+    if (lastOp === '+' || lastOp === '−') {
+      // 50 + 10% = 55：百分比按前面的数计算
+      try { value *= evaluate(tokens.slice(0, -1)); } catch { return fail(); }
+    }
+    current = formatResult(value);
+    fresh = true;
+  }
+
+  function backspace() {
+    if (error || fresh) return;
+    current = current.slice(0, -1);
+    if (current === '' || current === '-') {
+      current = '0';
+      fresh = true;
+    }
+  }
+
+  document.querySelector('.keys').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.digit) inputDigit(b.dataset.digit);
+    else if (b.dataset.op) inputOp(b.dataset.op);
+    else ({ clear, sign: toggleSign, percent, equals })[b.dataset.action]();
+    render();
+  });
+
+  // 和 iPhone 一样：在数字上左右滑动删除最后一位
+  let touchX = null;
+  displayEl.addEventListener('touchstart', e => { touchX = e.touches[0].clientX; }, { passive: true });
+  displayEl.addEventListener('touchend', e => {
+    if (touchX !== null && Math.abs(e.changedTouches[0].clientX - touchX) > 30) {
+      backspace();
+      render();
+    }
+    touchX = null;
+  });
+
+  // 电脑上也可以用键盘
+  const KEY_OPS = { '+': '+', '-': '−', '*': '×', 'x': '×', '/': '÷' };
+  document.addEventListener('keydown', e => {
+    const k = e.key;
+    if (/^[0-9.]$/.test(k)) inputDigit(k);
+    else if (KEY_OPS[k]) inputOp(KEY_OPS[k]);
+    else if (k === 'Enter' || k === '=') { e.preventDefault(); equals(); }
+    else if (k === 'Backspace') backspace();
+    else if (k === 'Escape' || k === 'c' || k === 'C') clear();
+    else if (k === '%') percent();
+    else return;
+    render();
+  });
+
+  render();
+</script>
+</body>
+</html>
